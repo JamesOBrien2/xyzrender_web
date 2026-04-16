@@ -56,7 +56,7 @@ st.write(
 uploaded = st.file_uploader("Choose a .xyz file", type=["xyz"])
 smiles = st.text_input(
     "Input SMILES string (optional)",
-    value="Smiles string here..."
+    placeholder="Smiles string here..."
 )
 out_name = st.text_input(
     "Output file name (extension will be adjusted automatically)",

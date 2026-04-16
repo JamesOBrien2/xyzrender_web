@@ -96,7 +96,10 @@
     // ── Handle render events from Streamlit ──────────────────────────
 
     window.addEventListener("message", (e) => {
-      if (!e.data.isStreamlitMessage || e.data.type !== "streamlit:render") return;
+      // Note: Streamlit does NOT include isStreamlitMessage in render events
+      // it sends TO the component — that field is only required on messages
+      // the component sends back to Streamlit.
+      if (e.data.type !== "streamlit:render") return;
 
       // Always set height first — even if viewer init fails the frame is visible.
       sendHeight(390);
