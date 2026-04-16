@@ -7,7 +7,8 @@ from pathlib import Path
 
 import streamlit as st
 
-st.set_page_config(page_title="xyzrender Web Tool", page_icon="🧪", layout="centered")
+st.set_page_config(page_title="xyzrender Web Tool",
+                   page_icon="🧪", layout="centered")
 
 st.title("xyzrender Web Tool")
 st.write(
@@ -32,20 +33,29 @@ st.subheader("xyzrender Options")
 col_left, col_right = st.columns(2)
 
 with col_left:
-    opt_bo    = st.checkbox("--bo")
+    opt_bo = st.checkbox("--bo")
     opt_no_bo = st.checkbox("--no-bo")
-    opt_vdw   = st.checkbox("--vdw")
-    opt_ts    = st.checkbox("--ts")
-    opt_hy    = st.checkbox("--hy")
-    opt_no_hy    = st.checkbox("--no-hy")
-
-with col_right:
-    opt_nci     = st.checkbox("--nci")
-    opt_gif_ts  = st.checkbox("--gif-ts")
+    opt_vdw = st.checkbox("--vdw")
+    opt_ts = st.checkbox("--ts")
+    opt_hy = st.checkbox("--hy")
+    opt_no_hy = st.checkbox("--no-hy")
+    opt_nci = st.checkbox("--nci")
+    opt_gif_ts = st.checkbox("--gif-ts")
     opt_gif_trj = st.checkbox("--gif-trj")
     opt_gif_rot = st.checkbox("--gif-rot")
-    opt_paton   = st.checkbox("--config paton")
-    opt_flat   = st.checkbox("--config flat")
+
+with col_right:
+    opt_flat = st.checkbox("--config flat")
+    opt_paton = st.checkbox("--config paton")
+    opt_pmol = st.checkbox("--config pmol")
+    opt_skeletal = st.checkbox("--config skeletal")
+    opt_bubble = st.checkbox("--config bubble")
+    opt_tube = st.checkbox("--config tube")
+    opt_btube = st.checkbox("--config btube")
+    opt_mtube = st.checkbox("--config mtube")
+    opt_wire = st.checkbox("--config wire")
+    opt_graph = st.checkbox("--config graph")
+
 
 # =========================
 # Sidebar controls
@@ -54,17 +64,20 @@ st.sidebar.image("images/BNNLab_v3.png")
 st.sidebar.header("Acknowledgements")
 st.sidebar.write("This web tool was built to showcase **xyzrender**, a Python package developed by Alister Goodfellow. The code is available at https://github.com/aligfellow/xyzrender. This is a very powerful command line image generator for molecular modelling outputs. It is best used in that manner and this tool should be used only as a demonstrator. The full instructions for the tool can be found at the Github link.")
 st.sidebar.header("Disclaimer")
-st.sidebar.write("This software was developed by BNNLab, with all rights reserved. It is offered 'as is', without warranty of any kind, express or implied. The user assumes all risk for any malfunctions, errors, or damages resulting from the use of this software. The creator is not responsible for any direct or indirect loss arising from its use.")
+st.sidebar.write("This software was developed by BNNLab, with all rights reserved, further developments made by James O'Brien. It is offered 'as is', without warranty of any kind, express or implied. The user assumes all risk for any malfunctions, errors, or damages resulting from the use of this software. The creator is not responsible for any direct or indirect loss arising from its use.")
 
 # Optional: soft warning for contradictory flags
 if opt_bo and opt_no_bo:
-    st.warning("You selected both `--bo` and `--no-bo`. That may be contradictory for xyzrender.")
+    st.warning(
+        "You selected both `--bo` and `--no-bo`. That may be contradictory for xyzrender.")
 
 if opt_hy and opt_no_hy:
-    st.warning("You selected both `--hy` and `--no-hy`. That may be contradictory for xyzrender.")
+    st.warning(
+        "You selected both `--hy` and `--no-hy`. That may be contradictory for xyzrender.")
 
 if opt_paton and opt_flat:
-    st.warning("You selected both `--config paton` and `--config flat`. That may be contradictory for xyzrender.")
+    st.warning(
+        "You selected both `--config paton` and `--config flat`. That may be contradictory for xyzrender.")
 
 # Determine mode based on GIF flags (GIF mode if any selected)
 gif_flags_selected = any([opt_gif_ts, opt_gif_trj, opt_gif_rot])
@@ -92,7 +105,8 @@ if run_btn:
     desired = Path(out_name)
     if desired.suffix.lower() != expected_ext:
         corrected = desired.with_suffix(expected_ext).name
-        st.info(f"Adjusted output file extension to `{expected_ext}` → **{corrected}**")
+        st.info(
+            f"Adjusted output file extension to `{expected_ext}` → **{corrected}**")
         out_name = corrected
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -107,19 +121,46 @@ if run_btn:
         cmd = ["xyzrender", str(in_path)]
 
         # Insert flags immediately after input path
-        if opt_bo:       cmd.append("--bo")
-        if opt_no_bo:    cmd.append("--no-bo")
-        if opt_vdw:      cmd.append("--vdw")
-        if opt_ts:       cmd.append("--ts")
-        if opt_nci:      cmd.append("--nci")
-        if opt_gif_ts:   cmd.append("--gif-ts")
-        if opt_gif_trj:  cmd.append("--gif-trj")
-        if opt_gif_rot:  cmd.append("--gif-rot")
-        if opt_hy:       cmd.append("--hy")
-        if opt_no_hy:    cmd.append("--no-hy")
-        if opt_paton:    cmd += ["--config", "paton"]
-        if opt_flat:     cmd += ["--config", "flat"]
-
+        if opt_bo:
+            cmd.append("--bo")
+        if opt_no_bo:
+            cmd.append("--no-bo")
+        if opt_vdw:
+            cmd.append("--vdw")
+        if opt_ts:
+            cmd.append("--ts")
+        if opt_nci:
+            cmd.append("--nci")
+        if opt_gif_ts:
+            cmd.append("--gif-ts")
+        if opt_gif_trj:
+            cmd.append("--gif-trj")
+        if opt_gif_rot:
+            cmd.append("--gif-rot")
+        if opt_hy:
+            cmd.append("--hy")
+        if opt_no_hy:
+            cmd.append("--no-hy")
+        if opt_flat:
+            cmd += ["--config", "flat"]
+        if opt_paton:
+            cmd += ["--config", "paton"]
+        if opt_pmol:
+            cmd += ["--config", "pmol"]
+        if opt_skeletal:
+            cmd += ["--config", "skeletal"]
+        if opt_bubble:
+            cmd += ["--config", "bubble"]
+        if opt_tube:
+            cmd += ["--config", "tube"]
+        if opt_btube:
+            cmd += ["--config", "btube"]
+        if opt_mtube:
+            cmd += ["--config", "mtube"]
+        if opt_wire:
+            cmd += ["--config", "wire"]
+        if opt_graph:
+            cmd += ["--config", "graph"]
 
         # Output handling per your rules:
         # - SVG mode: use "-o <out.svg>"
@@ -129,8 +170,8 @@ if run_btn:
         else:
             cmd += ["-o", str(out_path)]
 
-        #st.write("### Command to be executed")
-        #st.code(" ".join(cmd))
+        # st.write("### Command to be executed")
+        # st.code(" ".join(cmd))
 
         with st.spinner("Running xyzrender..."):
             try:
@@ -147,7 +188,8 @@ if run_btn:
                     st.code(e.stderr)
                 st.stop()
             except FileNotFoundError:
-                st.error("`xyzrender` not found. Ensure it is installed and on PATH.")
+                st.error(
+                    "`xyzrender` not found. Ensure it is installed and on PATH.")
                 st.stop()
             except Exception as e:
                 st.error(f"Unexpected error: {e}")
@@ -155,7 +197,8 @@ if run_btn:
 
         # Validate output
         if not out_path.exists() or out_path.stat().st_size == 0:
-            st.error(f"xyzrender did not produce the expected output file: **{out_path.name}**.")
+            st.error(
+                f"xyzrender did not produce the expected output file: **{out_path.name}**.")
             if proc.stdout:
                 st.subheader("stdout")
                 st.code(proc.stdout)
@@ -181,7 +224,8 @@ if run_btn:
                     unsafe_allow_html=True
                 )
             else:
-                st.info("SVG preview not available; you can download the file below.")
+                st.info(
+                    "SVG preview not available; you can download the file below.")
         else:
             # GIF preview
             st.write("### Preview (GIF)")
