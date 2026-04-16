@@ -12,7 +12,7 @@ st.set_page_config(page_title="xyzrender Web Tool",
 
 st.title("xyzrender Web Tool")
 st.write(
-    "Upload a `.xyz` file and this app will run `xyzrender file.xyz [options]` to "
+    "Upload a `.xyz` file (or SMILES) and this app will run `xyzrender file.xyz [options]` to "
     "generate an **SVG** or **GIF** preview you can download."
 )
 
@@ -20,6 +20,10 @@ st.write(
 # File upload & output name
 # --------------------------
 uploaded = st.file_uploader("Choose a .xyz file", type=["xyz"])
+smiles = st.text_input(
+    "Input SMILES string (optional)",
+    value="Smiles string here..."
+)
 out_name = st.text_input(
     "Output file name (extension will be adjusted automatically)",
     value="output.svg"
@@ -67,6 +71,12 @@ st.sidebar.header("Disclaimer")
 st.sidebar.write("This software was developed by BNNLab, with all rights reserved, further developments made by James O'Brien. It is offered 'as is', without warranty of any kind, express or implied. The user assumes all risk for any malfunctions, errors, or damages resulting from the use of this software. The creator is not responsible for any direct or indirect loss arising from its use.")
 
 # Optional: soft warning for contradictory flags
+if uploaded is None and not smiles.strip():
+    st.warning("No input file uploaded and no SMILES provided. Please upload a .xyz file or enter a SMILES string to proceed.")
+
+if uploaded is not None and smiles.strip():
+    st.warning("You provided both a file upload and a SMILES string. The file upload will take precedence over the file upload for rendering.")
+
 if opt_bo and opt_no_bo:
     st.warning(
         "You selected both `--bo` and `--no-bo`. That may be contradictory for xyzrender.")
@@ -75,9 +85,12 @@ if opt_hy and opt_no_hy:
     st.warning(
         "You selected both `--hy` and `--no-hy`. That may be contradictory for xyzrender.")
 
-if opt_paton and opt_flat:
+config_options = [opt_flat, opt_paton, opt_pmol, opt_skeletal,
+                  opt_bubble, opt_tube, opt_btube, opt_mtube, opt_wire, opt_graph]
+
+if sum(config_options) > 1:
     st.warning(
-        "You selected both `--config paton` and `--config flat`. That may be contradictory for xyzrender.")
+        "You selected multiple `--config` options. That may be contradictory for xyzrender.")
 
 # Determine mode based on GIF flags (GIF mode if any selected)
 gif_flags_selected = any([opt_gif_ts, opt_gif_trj, opt_gif_rot])
@@ -89,17 +102,13 @@ st.caption(f"Expected output type: **{expected_ext.upper()[1:]}**")
 # --------------------------
 # Render button
 # --------------------------
-run_btn = st.button("Render", type="primary", disabled=uploaded is None)
+run_btn = st.button("Render", type="primary", disabled=(
+    uploaded is None and not smiles.strip()))
 
 if run_btn:
-    if uploaded is None:
-        st.error("Please upload a .xyz file.")
+    if uploaded is None and not smiles.strip():
+        st.error("Please upload a .xyz file or enter a SMILES string.")
         st.stop()
-
-    # Normalize input file name
-    in_name = uploaded.name or "input.xyz"
-    if not in_name.lower().endswith(".xyz"):
-        in_name = Path(in_name).stem + ".xyz"
 
     # Normalize output name extension to match expected mode
     desired = Path(out_name)
@@ -111,14 +120,21 @@ if run_btn:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir_path = Path(tmpdir)
-        in_path = tmpdir_path / in_name
         out_path = tmpdir_path / out_name
 
-        # Save uploaded file
-        in_path.write_bytes(uploaded.getvalue())
+        # Normalize input file name and save (only if file uploaded)
+        if uploaded is not None:
+            in_name = uploaded.name or "input.xyz"
+            if not in_name.lower().endswith(".xyz"):
+                in_name = Path(in_name).stem + ".xyz"
+            in_path = tmpdir_path / in_name
+            in_path.write_bytes(uploaded.getvalue())
 
-        # Build command: xyzrender input.xyz [flags] [output spec]
-        cmd = ["xyzrender", str(in_path)]
+        # Build command: xyzrender [input.xyz or smiles] [flags] [output spec]
+        if uploaded:
+            cmd = ["xyzrender", str(in_path)]
+        else:
+            cmd = ["xyzrender", "--smi", smiles.strip()]
 
         # Insert flags immediately after input path
         if opt_bo:
