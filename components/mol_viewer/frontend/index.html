@@ -44,23 +44,25 @@
     let lastXyz  = null;   // detect molecule change across reruns
 
     // ── Streamlit postMessage protocol ───────────────────────────────
+    // isStreamlitMessage: true is required on every outbound message;
+    // Streamlit silently drops messages that omit it.
 
     function sendReady() {
       window.parent.postMessage(
-        { type: "streamlit:componentReady", apiVersion: 1 }, "*"
+        { isStreamlitMessage: true, type: "streamlit:componentReady", apiVersion: 1 }, "*"
       );
     }
 
     function sendHeight(h) {
       window.parent.postMessage(
-        { type: "streamlit:setFrameHeight", height: h }, "*"
+        { isStreamlitMessage: true, type: "streamlit:setFrameHeight", height: h }, "*"
       );
     }
 
     function sendView() {
       if (!viewer) return;
       window.parent.postMessage(
-        { type: "streamlit:setComponentValue", value: viewer.getView() }, "*"
+        { isStreamlitMessage: true, type: "streamlit:setComponentValue", value: viewer.getView() }, "*"
       );
     }
 
@@ -81,7 +83,7 @@
     // ── Handle render events from Streamlit ──────────────────────────
 
     window.addEventListener("message", (e) => {
-      if (e.data.type !== "streamlit:render") return;
+      if (!e.data.isStreamlitMessage || e.data.type !== "streamlit:render") return;
 
       const xyz = e.data.args.xyz_str;
 
