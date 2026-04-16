@@ -6,25 +6,27 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import py3Dmol
 import streamlit as st
-import streamlit.components.v1 as components
+
+from components.mol_viewer import mol_viewer
 
 
 # --------------------------
 # XYZ rotation helpers
 # --------------------------
-def _rotation_matrix(rx: float, ry: float, rz: float):
-    """Return Rx @ Ry @ Rz rotation matrix for angles in degrees."""
-    rx, ry, rz = np.radians([rx, ry, rz])
-    Rx = np.array([[1, 0, 0], [0, np.cos(rx), -np.sin(rx)], [0, np.sin(rx), np.cos(rx)]])
-    Ry = np.array([[np.cos(ry), 0, np.sin(ry)], [0, 1, 0], [-np.sin(ry), 0, np.cos(ry)]])
-    Rz = np.array([[np.cos(rz), -np.sin(rz), 0], [np.sin(rz), np.cos(rz), 0], [0, 0, 1]])
-    return Rx @ Ry @ Rz
+def _quaternion_to_rotation_matrix(qx, qy, qz, qw) -> np.ndarray:
+    """Convert a unit quaternion (from 3Dmol getView) to a 3×3 rotation matrix."""
+    n = np.sqrt(qx**2 + qy**2 + qz**2 + qw**2)
+    qx, qy, qz, qw = qx / n, qy / n, qz / n, qw / n
+    return np.array([
+        [1 - 2*(qy**2 + qz**2),     2*(qx*qy - qw*qz),     2*(qx*qz + qw*qy)],
+        [    2*(qx*qy + qw*qz), 1 - 2*(qx**2 + qz**2),     2*(qy*qz - qw*qx)],
+        [    2*(qx*qz - qw*qy),     2*(qy*qz + qw*qx), 1 - 2*(qx**2 + qy**2)],
+    ])
 
 
-def _rotate_xyz_bytes(xyz_bytes: bytes, rx: float, ry: float, rz: float) -> bytes:
-    """Parse XYZ bytes, apply rotation, return rotated XYZ as bytes."""
+def _apply_rotation_to_xyz(xyz_bytes: bytes, R: np.ndarray) -> bytes:
+    """Apply a 3×3 rotation matrix to every atom in an XYZ file."""
     lines = xyz_bytes.decode().splitlines()
     n = int(lines[0].strip())
     comment = lines[1]
@@ -32,7 +34,6 @@ def _rotate_xyz_bytes(xyz_bytes: bytes, rx: float, ry: float, rz: float) -> byte
     for line in lines[2:2 + n]:
         parts = line.split()
         atoms.append((parts[0], np.array([float(p) for p in parts[1:4]])))
-    R = _rotation_matrix(rx, ry, rz)
     out = [str(n), comment]
     for elem, coords in atoms:
         c = R @ coords
@@ -134,44 +135,26 @@ st.sidebar.header("Disclaimer")
 st.sidebar.write("This software was developed by BNNLab, with all rights reserved, further developments made by James O'Brien. It is offered 'as is', without warranty of any kind, express or implied. The user assumes all risk for any malfunctions, errors, or damages resulting from the use of this software. The creator is not responsible for any direct or indirect loss arising from its use.")
 
 # --------------------------
-# Orientation Controls (XYZ uploads only)
+# Interactive 3D orientation viewer (XYZ uploads only)
 # --------------------------
-st.subheader("Orientation Controls")
-_rot_disabled = uploaded is None
-if _rot_disabled:
-    st.caption("Upload an XYZ file to enable manual rotation sliders.")
-
-rot_x = st.slider(
-    "Rotate X (°)", 0, 360, 0, disabled=_rot_disabled,
-    help="Rotate around X axis before rendering. XYZ uploads only.",
-)
-rot_y = st.slider(
-    "Rotate Y (°)", 0, 360, 0, disabled=_rot_disabled,
-    help="Rotate around Y axis (applied after X).",
-)
-rot_z = st.slider(
-    "Rotate Z (°)", 0, 360, 0, disabled=_rot_disabled,
-    help="Rotate around Z axis (applied last). Auto-enables --no-orient.",
-)
-
-_custom_rotation = (rot_x != 0 or rot_y != 0 or rot_z != 0)
-if _custom_rotation:
-    st.info("Custom rotation applied — `--no-orient` will be added automatically.")
-
-# Live 3D preview (updates with slider changes)
 if uploaded is not None:
-    try:
-        _preview_bytes = uploaded.getvalue()
-        if _custom_rotation:
-            _preview_bytes = _rotate_xyz_bytes(_preview_bytes, rot_x, rot_y, rot_z)
-        _xyz_str = _preview_bytes.decode()
-        _view = py3Dmol.view(width=500, height=350)
-        _view.addModel(_xyz_str, "xyz")
-        _view.setStyle({}, {"stick": {"radius": 0.12}, "sphere": {"scale": 0.25}})
-        _view.zoomTo()
-        components.html(_view.write_html(f=None, fullpage=False), height=375, scrolling=False)
-    except Exception:
-        st.caption("3D preview unavailable for this file.")
+    # Reset stored view when a new file is uploaded
+    _file_key = f"{uploaded.name}_{uploaded.size}"
+    if st.session_state.get("_file_key") != _file_key:
+        st.session_state.pop("mol_view", None)
+        st.session_state["_file_key"] = _file_key
+
+    st.subheader("Orientation")
+    st.caption("Drag to rotate · Scroll to zoom — then click **Render** to capture this view.")
+
+    # Show the interactive viewer; it returns the current view quaternion on mouse-up
+    _view_result = mol_viewer(xyz_str=uploaded.getvalue().decode(), key="mol_viewer")
+    if _view_result is not None:
+        st.session_state["mol_view"] = _view_result
+
+_has_view = "mol_view" in st.session_state and uploaded is not None
+if _has_view:
+    st.info("Orientation captured — click **Render** to generate the image from this view.")
 
 # Optional: soft warning for contradictory flags
 if uploaded is None and not smiles.strip():
@@ -232,11 +215,14 @@ if run_btn:
                 in_name = Path(in_name).stem + ".xyz"
             in_path = tmpdir_path / in_name
             xyz_data = uploaded.getvalue()
-            if _custom_rotation:
+            if _has_view:
                 try:
-                    xyz_data = _rotate_xyz_bytes(xyz_data, rot_x, rot_y, rot_z)
+                    view = st.session_state["mol_view"]
+                    qx, qy, qz, qw = view[4], view[5], view[6], view[7]
+                    R = _quaternion_to_rotation_matrix(qx, qy, qz, qw)
+                    xyz_data = _apply_rotation_to_xyz(xyz_data, R)
                 except Exception as rot_err:
-                    st.error(f"Failed to apply rotation: {rot_err}")
+                    st.error(f"Failed to apply viewer orientation: {rot_err}")
                     st.stop()
             in_path.write_bytes(xyz_data)
 
@@ -290,8 +276,8 @@ if run_btn:
         if opt_graph:
             cmd += ["--config", "graph"]
 
-        # --no-orient: explicit checkbox or forced by custom rotation sliders
-        if opt_no_orient or _custom_rotation:
+        # --no-orient: explicit checkbox or forced by viewer orientation capture
+        if opt_no_orient or _has_view:
             cmd.append("--no-orient")
 
         # Output handling per your rules:

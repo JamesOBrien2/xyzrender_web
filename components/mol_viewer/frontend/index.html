@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #ffffff; overflow: hidden; font-family: sans-serif; }
+
+    #viewer-container {
+      width: 100%;
+      height: 370px;
+      position: relative;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+
+    #viewer { width: 100%; height: 100%; }
+
+    #hint {
+      position: absolute;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px;
+      color: #999;
+      pointer-events: none;
+      white-space: nowrap;
+      background: rgba(255,255,255,0.75);
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="viewer-container">
+    <div id="viewer"></div>
+    <div id="hint">Drag to rotate &nbsp;·&nbsp; Scroll to zoom</div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
+  <script>
+    let viewer   = null;
+    let lastXyz  = null;   // detect molecule change across reruns
+
+    // ── Streamlit postMessage protocol ───────────────────────────────
+
+    function sendReady() {
+      window.parent.postMessage(
+        { type: "streamlit:componentReady", apiVersion: 1 }, "*"
+      );
+    }
+
+    function sendHeight(h) {
+      window.parent.postMessage(
+        { type: "streamlit:setFrameHeight", height: h }, "*"
+      );
+    }
+
+    function sendView() {
+      if (!viewer) return;
+      window.parent.postMessage(
+        { type: "streamlit:setComponentValue", value: viewer.getView() }, "*"
+      );
+    }
+
+    // ── Viewer setup ─────────────────────────────────────────────────
+
+    function initViewer() {
+      viewer = $3Dmol.createViewer("viewer", { backgroundColor: "white" });
+    }
+
+    function loadXyz(xyzStr) {
+      viewer.clear();
+      viewer.addModel(xyzStr, "xyz");
+      viewer.setStyle({}, { stick: { radius: 0.12 }, sphere: { scale: 0.25 } });
+      viewer.zoomTo();
+      viewer.render();
+    }
+
+    // ── Handle render events from Streamlit ──────────────────────────
+
+    window.addEventListener("message", (e) => {
+      if (e.data.type !== "streamlit:render") return;
+
+      const xyz = e.data.args.xyz_str;
+
+      if (!viewer) initViewer();
+
+      // Only reload when the molecule actually changes.
+      // This preserves the user's drag-rotation across Streamlit reruns
+      // (the iframe lives on; viewer state is in-memory and persists).
+      if (xyz !== lastXyz) {
+        lastXyz = xyz;
+        loadXyz(xyz);
+      }
+
+      sendHeight(390);
+    });
+
+    // Send current orientation whenever the user finishes a drag
+    document.addEventListener("mouseup", () => { if (viewer) sendView(); });
+
+    // Also send on touch end for mobile
+    document.addEventListener("touchend", () => { if (viewer) sendView(); });
+
+    // Signal readiness (3Dmol is already loaded synchronously above)
+    sendReady();
+  </script>
+</body>
+</html>
