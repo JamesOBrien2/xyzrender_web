@@ -1,2 +1,4 @@
 streamlit>=1.25
 xyzrender
+numpy
+py3Dmol

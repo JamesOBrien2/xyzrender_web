@@ -5,7 +5,40 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+import numpy as np
+import py3Dmol
 import streamlit as st
+import streamlit.components.v1 as components
+
+
+# --------------------------
+# XYZ rotation helpers
+# --------------------------
+def _rotation_matrix(rx: float, ry: float, rz: float):
+    """Return Rx @ Ry @ Rz rotation matrix for angles in degrees."""
+    rx, ry, rz = np.radians([rx, ry, rz])
+    Rx = np.array([[1, 0, 0], [0, np.cos(rx), -np.sin(rx)], [0, np.sin(rx), np.cos(rx)]])
+    Ry = np.array([[np.cos(ry), 0, np.sin(ry)], [0, 1, 0], [-np.sin(ry), 0, np.cos(ry)]])
+    Rz = np.array([[np.cos(rz), -np.sin(rz), 0], [np.sin(rz), np.cos(rz), 0], [0, 0, 1]])
+    return Rx @ Ry @ Rz
+
+
+def _rotate_xyz_bytes(xyz_bytes: bytes, rx: float, ry: float, rz: float) -> bytes:
+    """Parse XYZ bytes, apply rotation, return rotated XYZ as bytes."""
+    lines = xyz_bytes.decode().splitlines()
+    n = int(lines[0].strip())
+    comment = lines[1]
+    atoms = []
+    for line in lines[2:2 + n]:
+        parts = line.split()
+        atoms.append((parts[0], np.array([float(p) for p in parts[1:4]])))
+    R = _rotation_matrix(rx, ry, rz)
+    out = [str(n), comment]
+    for elem, coords in atoms:
+        c = R @ coords
+        out.append(f"{elem}  {c[0]:.6f}  {c[1]:.6f}  {c[2]:.6f}")
+    return "\n".join(out).encode()
+
 
 st.set_page_config(page_title="xyzrender Web Tool",
                    page_icon="🧪", layout="centered")
@@ -47,6 +80,10 @@ with col_left:
     opt_gif_ts = st.checkbox("--gif-ts")
     opt_gif_trj = st.checkbox("--gif-trj")
     opt_gif_rot = st.checkbox("--gif-rot")
+    opt_no_orient = st.checkbox(
+        "--no-orient",
+        help="Disable PCA auto-orientation. Applied automatically when rotation sliders are used.",
+    )
 
 with col_right:
     opt_flat = st.checkbox("--config flat")
@@ -61,6 +98,32 @@ with col_right:
     opt_graph = st.checkbox("--config graph")
 
 
+# --------------------------
+# Conditional GIF controls
+# --------------------------
+gif_rot_axis = "y"   # xyzrender default
+rot_frames = 120     # xyzrender default
+gif_fps = 10         # xyzrender default
+
+if opt_gif_rot:
+    gif_rot_axis = st.selectbox(
+        "--gif-rot axis",
+        options=["y", "x", "z", "-x", "-y", "-z", "xy", "xz", "yz", "yx", "zx", "zy"],
+        index=0,
+        help="Axis for GIF rotation animation. Default: 'y'.",
+    )
+    rot_frames = st.number_input(
+        "--rot-frames (frames per full rotation)",
+        min_value=1, max_value=720, value=120, step=1,
+    )
+
+if any([opt_gif_ts, opt_gif_trj, opt_gif_rot]):
+    gif_fps = st.number_input(
+        "--gif-fps (frames per second)",
+        min_value=1, max_value=60, value=10, step=1,
+    )
+
+
 # =========================
 # Sidebar controls
 # =========================
@@ -69,6 +132,46 @@ st.sidebar.header("Acknowledgements")
 st.sidebar.write("This web tool was built to showcase **xyzrender**, a Python package developed by Alister Goodfellow. The code is available at https://github.com/aligfellow/xyzrender. This is a very powerful command line image generator for molecular modelling outputs. It is best used in that manner and this tool should be used only as a demonstrator. The full instructions for the tool can be found at the Github link.")
 st.sidebar.header("Disclaimer")
 st.sidebar.write("This software was developed by BNNLab, with all rights reserved, further developments made by James O'Brien. It is offered 'as is', without warranty of any kind, express or implied. The user assumes all risk for any malfunctions, errors, or damages resulting from the use of this software. The creator is not responsible for any direct or indirect loss arising from its use.")
+
+# --------------------------
+# Orientation Controls (XYZ uploads only)
+# --------------------------
+st.subheader("Orientation Controls")
+_rot_disabled = uploaded is None
+if _rot_disabled:
+    st.caption("Upload an XYZ file to enable manual rotation sliders.")
+
+rot_x = st.slider(
+    "Rotate X (°)", 0, 360, 0, disabled=_rot_disabled,
+    help="Rotate around X axis before rendering. XYZ uploads only.",
+)
+rot_y = st.slider(
+    "Rotate Y (°)", 0, 360, 0, disabled=_rot_disabled,
+    help="Rotate around Y axis (applied after X).",
+)
+rot_z = st.slider(
+    "Rotate Z (°)", 0, 360, 0, disabled=_rot_disabled,
+    help="Rotate around Z axis (applied last). Auto-enables --no-orient.",
+)
+
+_custom_rotation = (rot_x != 0 or rot_y != 0 or rot_z != 0)
+if _custom_rotation:
+    st.info("Custom rotation applied — `--no-orient` will be added automatically.")
+
+# Live 3D preview (updates with slider changes)
+if uploaded is not None:
+    try:
+        _preview_bytes = uploaded.getvalue()
+        if _custom_rotation:
+            _preview_bytes = _rotate_xyz_bytes(_preview_bytes, rot_x, rot_y, rot_z)
+        _xyz_str = _preview_bytes.decode()
+        _view = py3Dmol.view(width=500, height=350)
+        _view.addModel(_xyz_str, "xyz")
+        _view.setStyle({}, {"stick": {"radius": 0.12}, "sphere": {"scale": 0.25}})
+        _view.zoomTo()
+        components.html(_view.write_html(f=None, fullpage=False), height=375, scrolling=False)
+    except Exception:
+        st.caption("3D preview unavailable for this file.")
 
 # Optional: soft warning for contradictory flags
 if uploaded is None and not smiles.strip():
@@ -128,7 +231,14 @@ if run_btn:
             if not in_name.lower().endswith(".xyz"):
                 in_name = Path(in_name).stem + ".xyz"
             in_path = tmpdir_path / in_name
-            in_path.write_bytes(uploaded.getvalue())
+            xyz_data = uploaded.getvalue()
+            if _custom_rotation:
+                try:
+                    xyz_data = _rotate_xyz_bytes(xyz_data, rot_x, rot_y, rot_z)
+                except Exception as rot_err:
+                    st.error(f"Failed to apply rotation: {rot_err}")
+                    st.stop()
+            in_path.write_bytes(xyz_data)
 
         # Build command: xyzrender [input.xyz or smiles] [flags] [output spec]
         if uploaded:
@@ -152,7 +262,9 @@ if run_btn:
         if opt_gif_trj:
             cmd.append("--gif-trj")
         if opt_gif_rot:
-            cmd.append("--gif-rot")
+            cmd += ["--gif-rot", gif_rot_axis, "--rot-frames", str(rot_frames)]
+        if any([opt_gif_ts, opt_gif_trj, opt_gif_rot]):
+            cmd += ["--gif-fps", str(gif_fps)]
         if opt_hy:
             cmd.append("--hy")
         if opt_no_hy:
@@ -177,6 +289,10 @@ if run_btn:
             cmd += ["--config", "wire"]
         if opt_graph:
             cmd += ["--config", "graph"]
+
+        # --no-orient: explicit checkbox or forced by custom rotation sliders
+        if opt_no_orient or _custom_rotation:
+            cmd.append("--no-orient")
 
         # Output handling per your rules:
         # - SVG mode: use "-o <out.svg>"
