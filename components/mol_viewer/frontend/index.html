@@ -30,22 +30,35 @@
       padding: 2px 8px;
       border-radius: 10px;
     }
+
+    #error-msg {
+      display: none;
+      position: absolute;
+      inset: 0;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      color: #888;
+      text-align: center;
+      padding: 20px;
+    }
   </style>
 </head>
 <body>
   <div id="viewer-container">
     <div id="viewer"></div>
     <div id="hint">Drag to rotate &nbsp;·&nbsp; Scroll to zoom</div>
+    <div id="error-msg">3D viewer unavailable</div>
   </div>
 
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.1.0/3Dmol-min.js"></script>
+  <!-- Bundled locally — no CDN dependency -->
+  <script src="./3Dmol-min.js"></script>
   <script>
-    let viewer   = null;
-    let lastXyz  = null;   // detect molecule change across reruns
+    let viewer  = null;
+    let lastXyz = null;
 
     // ── Streamlit postMessage protocol ───────────────────────────────
-    // isStreamlitMessage: true is required on every outbound message;
-    // Streamlit silently drops messages that omit it.
+    // isStreamlitMessage: true is required on every outbound message.
 
     function sendReady() {
       window.parent.postMessage(
@@ -85,29 +98,34 @@
     window.addEventListener("message", (e) => {
       if (!e.data.isStreamlitMessage || e.data.type !== "streamlit:render") return;
 
-      const xyz = e.data.args.xyz_str;
-
-      if (!viewer) initViewer();
-
-      // Only reload when the molecule actually changes.
-      // This preserves the user's drag-rotation across Streamlit reruns
-      // (the iframe lives on; viewer state is in-memory and persists).
-      if (xyz !== lastXyz) {
-        lastXyz = xyz;
-        loadXyz(xyz);
-      }
-
+      // Always set height first — even if viewer init fails the frame is visible.
       sendHeight(390);
+
+      try {
+        const xyz = e.data.args.xyz_str;
+
+        if (!viewer) initViewer();
+
+        // Only reload when the molecule actually changes —
+        // preserves the user's drag-rotation across Streamlit reruns.
+        if (xyz !== lastXyz) {
+          lastXyz = xyz;
+          loadXyz(xyz);
+        }
+      } catch (err) {
+        console.error("mol_viewer render error:", err);
+        document.getElementById("error-msg").style.display = "flex";
+        document.getElementById("hint").style.display = "none";
+      }
     });
 
-    // Send current orientation whenever the user finishes a drag
-    document.addEventListener("mouseup", () => { if (viewer) sendView(); });
+    // Capture orientation whenever the user stops dragging
+    document.addEventListener("mouseup",   () => { if (viewer) sendView(); });
+    document.addEventListener("touchend",  () => { if (viewer) sendView(); });
 
-    // Also send on touch end for mobile
-    document.addEventListener("touchend", () => { if (viewer) sendView(); });
-
-    // Signal readiness (3Dmol is already loaded synchronously above)
+    // Signal ready — 3Dmol-min.js is already loaded (blocking script above)
     sendReady();
+    sendHeight(390);  // set initial height immediately; render event will confirm it
   </script>
 </body>
 </html>
