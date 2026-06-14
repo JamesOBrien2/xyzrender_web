@@ -41,6 +41,25 @@ def _apply_rotation_to_xyz(xyz_bytes: bytes, R: np.ndarray) -> bytes:
     return "\n".join(out).encode()
 
 
+@st.cache_data(show_spinner=False)
+def _extract_xyz_for_viewer(file_bytes: bytes, file_name: str) -> str | None:
+    """Extract a single-frame XYZ for the 3D viewer from a non-XYZ upload
+    (e.g. a QM ``.out`` file), using xyzrender's own loader so the atom
+    ordering matches what xyzrender renders. Returns None on failure."""
+    suffix = Path(file_name).suffix or ".out"
+    try:
+        from xyzrender.api import load
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / ("input" + suffix)
+            src.write_bytes(file_bytes)
+            mol = load(str(src))
+            dst = Path(td) / "preview.xyz"
+            mol.to_xyz(dst, title="xyzrender preview")
+            return dst.read_text()
+    except Exception:
+        return None
+
+
 st.set_page_config(page_title="xyzrender Web Tool",
                    page_icon="🧪", layout="centered")
 
@@ -136,10 +155,13 @@ st.sidebar.header("Disclaimer")
 st.sidebar.write("This software was developed by BNNLab, with all rights reserved, further developments made by James O'Brien. It is offered 'as is', without warranty of any kind, express or implied. The user assumes all risk for any malfunctions, errors, or damages resulting from the use of this software. The creator is not responsible for any direct or indirect loss arising from its use.")
 
 # --------------------------
-# Interactive 3D orientation viewer (XYZ uploads only)
+# Interactive 3D orientation viewer (.xyz and .out uploads)
 # --------------------------
 _is_xyz_upload = uploaded is not None and uploaded.name.lower().endswith(".xyz")
 
+# Structure shown in the 3D viewer: raw XYZ for .xyz uploads, or a single
+# frame extracted from the QM output for .out uploads.
+_viewer_xyz = None
 if uploaded is not None:
     # Reset stored view when a new file is uploaded
     _file_key = f"{uploaded.name}_{uploaded.size}"
@@ -147,16 +169,24 @@ if uploaded is not None:
         st.session_state.pop("mol_view", None)
         st.session_state["_file_key"] = _file_key
 
-if _is_xyz_upload:
+    if _is_xyz_upload:
+        _viewer_xyz = uploaded.getvalue().decode(errors="replace")
+    else:
+        with st.spinner("Extracting structure for orientation preview..."):
+            _viewer_xyz = _extract_xyz_for_viewer(uploaded.getvalue(), uploaded.name)
+
+if _viewer_xyz:
     st.subheader("Orientation")
     st.caption("Drag to rotate · Scroll to zoom — then click **Render** to capture this view.")
 
     # Show the interactive viewer; it returns the current view quaternion on mouse-up
-    _view_result = mol_viewer(xyz_str=uploaded.getvalue().decode(), key="mol_viewer")
+    _view_result = mol_viewer(xyz_str=_viewer_xyz, key="mol_viewer")
     if _view_result is not None:
         st.session_state["mol_view"] = _view_result
+elif uploaded is not None and not _is_xyz_upload:
+    st.caption("Could not extract a structure from this file for the orientation preview; rendering will use auto-orientation.")
 
-_has_view = "mol_view" in st.session_state and _is_xyz_upload
+_has_view = "mol_view" in st.session_state and _viewer_xyz is not None
 if _has_view:
     st.info("Orientation captured — click **Render** to generate the image from this view.")
 
@@ -212,24 +242,37 @@ if run_btn:
         tmpdir_path = Path(tmpdir)
         out_path = tmpdir_path / out_name
 
+        # Captured orientation -> rotation matrix (shared by both input types).
+        ref_path = None
+        R = None
+        if _has_view:
+            try:
+                view = st.session_state["mol_view"]
+                qx, qy, qz, qw = view[4], view[5], view[6], view[7]
+                R = _quaternion_to_rotation_matrix(qx, qy, qz, qw)
+            except Exception as rot_err:
+                st.error(f"Failed to apply viewer orientation: {rot_err}")
+                st.stop()
+
         # Save uploaded input, preserving its original extension so xyzrender
-        # can detect the format (.xyz, .out, …). Only .xyz can be re-oriented.
+        # can detect the format (.xyz, .out, …).
         if uploaded is not None:
             in_name = uploaded.name or "input.xyz"
             if not Path(in_name).suffix:
                 in_name = Path(in_name).stem + ".xyz"
             in_path = tmpdir_path / in_name
             xyz_data = uploaded.getvalue()
-            if _has_view:
-                try:
-                    view = st.session_state["mol_view"]
-                    qx, qy, qz, qw = view[4], view[5], view[6], view[7]
-                    R = _quaternion_to_rotation_matrix(qx, qy, qz, qw)
-                    xyz_data = _apply_rotation_to_xyz(xyz_data, R)
-                except Exception as rot_err:
-                    st.error(f"Failed to apply viewer orientation: {rot_err}")
-                    st.stop()
+            if R is not None and _is_xyz_upload:
+                # XYZ: rotate coordinates in place and disable auto-orientation.
+                xyz_data = _apply_rotation_to_xyz(xyz_data, R)
             in_path.write_bytes(xyz_data)
+
+            if R is not None and not _is_xyz_upload and _viewer_xyz:
+                # .out (or other multi-frame/QM input): xyzrender can't re-read
+                # rotated coords from the original file, so capture the chosen
+                # orientation as a reference XYZ and align onto it via --ref.
+                ref_path = tmpdir_path / "reference.xyz"
+                ref_path.write_bytes(_apply_rotation_to_xyz(_viewer_xyz.encode(), R))
 
         # Build command: xyzrender [input.xyz or smiles] [flags] [output spec]
         if uploaded:
@@ -281,8 +324,13 @@ if run_btn:
         if opt_graph:
             cmd += ["--config", "graph"]
 
-        # --no-orient: explicit checkbox or forced by viewer orientation capture
-        if opt_no_orient or _has_view:
+        # Orientation handling:
+        # - .out via --ref: xyzrender aligns onto the captured reference frame.
+        # - .xyz captured view: coords already rotated, so disable auto-orient.
+        # - explicit --no-orient checkbox always honoured.
+        if ref_path is not None:
+            cmd += ["--ref", str(ref_path)]
+        if opt_no_orient or (R is not None and _is_xyz_upload):
             cmd.append("--no-orient")
 
         # Output handling per your rules:
