@@ -46,14 +46,15 @@ st.set_page_config(page_title="xyzrender Web Tool",
 
 st.title("xyzrender Web Tool")
 st.write(
-    "Upload a `.xyz` file (or SMILES) and this app will run `xyzrender file.xyz [options]` to "
-    "generate an **SVG** or **GIF** preview you can download."
+    "Upload a `.xyz` or `.out` file (or SMILES) and this app will run `xyzrender file [options]` to "
+    "generate an **SVG** or **GIF** preview you can download. Use a multi-frame `.out` "
+    "(optimization/trajectory or frequency output) with `--gif-trj`/`--gif-ts` to make a GIF."
 )
 
 # --------------------------
 # File upload & output name
 # --------------------------
-uploaded = st.file_uploader("Choose a .xyz file", type=["xyz"])
+uploaded = st.file_uploader("Choose a .xyz or .out file", type=["xyz", "out"])
 smiles = st.text_input(
     "Input SMILES string (optional)",
     placeholder="Smiles string here..."
@@ -137,6 +138,8 @@ st.sidebar.write("This software was developed by BNNLab, with all rights reserve
 # --------------------------
 # Interactive 3D orientation viewer (XYZ uploads only)
 # --------------------------
+_is_xyz_upload = uploaded is not None and uploaded.name.lower().endswith(".xyz")
+
 if uploaded is not None:
     # Reset stored view when a new file is uploaded
     _file_key = f"{uploaded.name}_{uploaded.size}"
@@ -144,6 +147,7 @@ if uploaded is not None:
         st.session_state.pop("mol_view", None)
         st.session_state["_file_key"] = _file_key
 
+if _is_xyz_upload:
     st.subheader("Orientation")
     st.caption("Drag to rotate · Scroll to zoom — then click **Render** to capture this view.")
 
@@ -152,7 +156,7 @@ if uploaded is not None:
     if _view_result is not None:
         st.session_state["mol_view"] = _view_result
 
-_has_view = "mol_view" in st.session_state and uploaded is not None
+_has_view = "mol_view" in st.session_state and _is_xyz_upload
 if _has_view:
     st.info("Orientation captured — click **Render** to generate the image from this view.")
 
@@ -208,10 +212,11 @@ if run_btn:
         tmpdir_path = Path(tmpdir)
         out_path = tmpdir_path / out_name
 
-        # Normalize input file name and save (only if file uploaded)
+        # Save uploaded input, preserving its original extension so xyzrender
+        # can detect the format (.xyz, .out, …). Only .xyz can be re-oriented.
         if uploaded is not None:
             in_name = uploaded.name or "input.xyz"
-            if not in_name.lower().endswith(".xyz"):
+            if not Path(in_name).suffix:
                 in_name = Path(in_name).stem + ".xyz"
             in_path = tmpdir_path / in_name
             xyz_data = uploaded.getvalue()
