@@ -2,6 +2,7 @@ import io
 import os
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -243,7 +244,6 @@ if run_btn:
         out_path = tmpdir_path / out_name
 
         # Captured orientation -> rotation matrix (shared by both input types).
-        ref_path = None
         R = None
         if _has_view:
             try:
@@ -253,6 +253,12 @@ if run_btn:
             except Exception as rot_err:
                 st.error(f"Failed to apply viewer orientation: {rot_err}")
                 st.stop()
+
+        # .out (or other QM/multi-frame) inputs can't be re-read with rotated
+        # coordinates, and xyzrender only honours a custom orientation on those
+        # paths via its interactive viewer (-I). render_driver.py reproduces -I
+        # non-interactively from the captured rotation matrix.
+        use_driver = R is not None and uploaded is not None and not _is_xyz_upload
 
         # Save uploaded input, preserving its original extension so xyzrender
         # can detect the format (.xyz, .out, …).
@@ -267,18 +273,11 @@ if run_btn:
                 xyz_data = _apply_rotation_to_xyz(xyz_data, R)
             in_path.write_bytes(xyz_data)
 
-            if R is not None and not _is_xyz_upload and _viewer_xyz:
-                # .out (or other multi-frame/QM input): xyzrender can't re-read
-                # rotated coords from the original file, so capture the chosen
-                # orientation as a reference XYZ and align onto it via --ref.
-                ref_path = tmpdir_path / "reference.xyz"
-                ref_path.write_bytes(_apply_rotation_to_xyz(_viewer_xyz.encode(), R))
-
-        # Build command: xyzrender [input.xyz or smiles] [flags] [output spec]
+        # Build xyzrender argument list: [input.xyz or smiles] [flags] [output]
         if uploaded:
-            cmd = ["xyzrender", str(in_path)]
+            cmd = [str(in_path)]
         else:
-            cmd = ["xyzrender", "--smi", smiles.strip()]
+            cmd = ["--smi", smiles.strip()]
 
         # Insert flags immediately after input path
         if opt_bo:
@@ -325,11 +324,12 @@ if run_btn:
             cmd += ["--config", "graph"]
 
         # Orientation handling:
-        # - .out via --ref: xyzrender aligns onto the captured reference frame.
+        # - .out captured view: run via the driver in -I mode so xyzrender
+        #   applies the captured rotation (auto-orient is disabled by -I).
         # - .xyz captured view: coords already rotated, so disable auto-orient.
         # - explicit --no-orient checkbox always honoured.
-        if ref_path is not None:
-            cmd += ["--ref", str(ref_path)]
+        if use_driver:
+            cmd.append("-I")
         if opt_no_orient or (R is not None and _is_xyz_upload):
             cmd.append("--no-orient")
 
@@ -340,6 +340,17 @@ if run_btn:
             cmd += ["-go", str(out_path)]
         else:
             cmd += ["-o", str(out_path)]
+
+        # Assemble the executable command. For captured orientations on .out
+        # inputs, run through render_driver.py (which injects the rotation into
+        # xyzrender's -I path); otherwise invoke the xyzrender CLI directly.
+        if use_driver:
+            rot_path = tmpdir_path / "rotation.txt"
+            np.savetxt(rot_path, R)
+            driver = Path(__file__).resolve().parent / "render_driver.py"
+            cmd = [sys.executable, str(driver), str(rot_path), *cmd]
+        else:
+            cmd = ["xyzrender", *cmd]
 
         # st.write("### Command to be executed")
         # st.code(" ".join(cmd))
